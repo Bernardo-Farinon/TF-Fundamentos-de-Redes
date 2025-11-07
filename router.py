@@ -18,12 +18,13 @@ routing_lock = threading.Lock()
 
 
 def safe_print(*args, **kwargs):
+    # Protege prints concorrentes
     with print_lock:
         print(*args, **kwargs)
 
 
 def print_routing_table():
-    # Protege leitura da tabela e imprime de forma atômica
+    # printa tabela de roteamento atual
     with routing_lock:
         safe_print("\n==== TABELA DE ROTEAMENTO ====")
         safe_print("Destino\t\tMétrica\tPróximo Salto")
@@ -33,7 +34,7 @@ def print_routing_table():
 
 
 def read_neighbors(local_ip: str, neighbors_file: Path):
-    # Monta vizinhos/tabela com lock
+    # le o txt e preenche lista de vizinhos e tabela de roteamento
     with routing_lock:
         neighbors.clear()
         routing_table.clear()
@@ -45,7 +46,6 @@ def read_neighbors(local_ip: str, neighbors_file: Path):
                 routing_table[ip] = (1, ip)
                 last_seen[ip] = time.time()
 
-        # prints fora ou dentro do lock? Pode ser dentro (curto) para garantir consistência
         safe_print(f"[INFO] Roteador local: {local_ip}")
         safe_print(f"[INFO] Vizinhos diretos: {sorted(neighbors)}")
 
@@ -53,8 +53,8 @@ def read_neighbors(local_ip: str, neighbors_file: Path):
 
 
 def send_announce_router():
+    # anuncia online para os vizinhos
     msg = f"@{local_ip}".encode()
-    # snapshot de vizinhos sob lock
     with routing_lock:
         neigh_copy = list(neighbors)
 
@@ -64,6 +64,7 @@ def send_announce_router():
 
 
 def listen():
+    # aguarda mensagens recebidas e processa
     while True:
         data, addr = sock.recvfrom(1024)
         msg = data.decode().strip()
@@ -122,7 +123,6 @@ def listen():
             if destino == local_ip:
                 safe_print(f"\n[MENSAGEM DE {origem}] {texto}\n")
             else:
-                # ler rota sob lock
                 with routing_lock:
                     if destino not in routing_table:
                         missing = True
@@ -143,6 +143,7 @@ def listen():
 
 
 def build_message_for_neighbor(neighbor: str) -> bytes:
+    # monta mensagem de rotas para vizinho, garante split horizon
     parts = []
     with routing_lock:
         for dest, (metric, next_hop) in routing_table.items():
@@ -156,8 +157,8 @@ def build_message_for_neighbor(neighbor: str) -> bytes:
 
 
 def sender_loop():
+    # envia peridocamente mensagem de rota para os vizinhos
     while True:
-        # snapshot de vizinhos sob lock para não iterar estrutura mutável
         with routing_lock:
             neigh_copy = list(neighbors)
 
@@ -170,6 +171,7 @@ def sender_loop():
 
 
 def process_route_message(sender_ip: str, payload: str):
+    # processa mensagens de rota derecebida de vizinhos
     safe_print(f"[PROCESSANDO ROTAS] payload recebido de {sender_ip}: {payload}")
     changed = False
 
@@ -177,7 +179,6 @@ def process_route_message(sender_ip: str, payload: str):
     announced_now = set()
 
     with routing_lock:
-        # Garante vizinho e rota direta
         neighbors.add(sender_ip)
         if sender_ip not in routing_table or routing_table[sender_ip][0] != 1 or routing_table[sender_ip][1] != sender_ip:
             routing_table[sender_ip] = (1, sender_ip)
@@ -191,7 +192,7 @@ def process_route_message(sender_ip: str, payload: str):
                 safe_print(f"[WARN] entrada inválida no payload de {sender_ip}: {entry}")
                 continue
 
-            safe_print(f"  parsing -> destino: {dest}, métrica recebida: {metric} (vou armazenar como {metric+1} via {sender_ip})")
+            #safe_print(f"  parsing -> destino: {dest}, métrica recebida: {metric} (vou armazenar como {metric+1} via {sender_ip})")
 
             if dest == local_ip:
                 continue
@@ -208,9 +209,9 @@ def process_route_message(sender_ip: str, payload: str):
             current_metric, current_next = routing_table[dest]
             if new_metric < current_metric:
                 routing_table[dest] = (new_metric, sender_ip)
+                safe_print(f"  [DEBUG] rota melhorada: {dest} -> {(new_metric, sender_ip)}")
                 changed = True
 
-        # NÃO remova a rota direta para o visinho (dest == sender_ip)
         routes_via_sender = {
             dest for dest, (m, nh) in routing_table.items()
             if nh == sender_ip and dest != sender_ip
@@ -227,10 +228,10 @@ def process_route_message(sender_ip: str, payload: str):
 
 
 def timeout_monitor():
+    # monitora timeout de vizinhos (desconexao)
     while True:
         now = time.time()
 
-        # snapshot de candidatos inativos
         with routing_lock:
             stale = []
             for n in list(neighbors):
@@ -247,7 +248,6 @@ def timeout_monitor():
                     del routing_table[n]
                     removed = True
 
-                # Remover rotas que dependiam desse next_hop
                 for dest in list(routing_table.keys()):
                     _, next_hop = routing_table[dest]
                     if next_hop == n:
@@ -264,6 +264,7 @@ def timeout_monitor():
 
 
 def periodic_table_display():
+    # printa tabela periodicamente
     global table_print_count
     while True:
         time.sleep(15)
@@ -273,6 +274,7 @@ def periodic_table_display():
 
 
 def send_text_message(dest: str, text: str):
+    # prepara e envia mensagem de texto para destino
     msg = f"!{local_ip};{dest};{text}".encode()
 
     with routing_lock:
@@ -292,6 +294,7 @@ def send_text_message(dest: str, text: str):
 
 
 def user_input_loop():
+    # espera comandos do usuario para enviar mensagens
     while True:
         try:
             line = input().strip()
