@@ -115,31 +115,33 @@ def listen():
 
         if msg.startswith("!"):
             try:
-                _bang, origem, destino, texto = msg.replace("!", "", 1).split(";", 3)
-            except:
-                safe_print(f"[RECV] Mensagem de texto mal formatada de {sender}: {msg}")
+                # remove "!" e espaços/quebras de linha
+                clean = msg[1:].strip()
+
+                # divide em 3 partes: origem ; destino ; texto
+                origem, destino, texto = clean.split(";", 2)
+
+            except ValueError:
+                safe_print(f"[RECV] Mensagem de texto mal formatada de {sender}: {repr(msg)}")
                 continue
 
+            # Se a mensagem é para este roteador
             if destino == local_ip:
                 safe_print(f"\n[MENSAGEM DE {origem}] {texto}\n")
-            else:
-                with routing_lock:
-                    if destino not in routing_table:
-                        missing = True
-                        next_hop = None
-                    else:
-                        missing = False
-                        next_hop = routing_table[destino][1]
+                continue
 
-                if missing:
-                    safe_print(f"[ERRO] Recebida msg para {destino}, mas não há rota. Descartando.")
+            # Caso contrário, tentar encaminhar
+            with routing_lock:
+                if destino not in routing_table:
+                    safe_print(f"[ERRO] Mensagem para {destino}, mas sem rota. Descartando.")
                     continue
 
-                sock.sendto(msg.encode(), (next_hop, PORT))
-                safe_print(f"[FORWARD] Encaminhando msg para {destino} via {next_hop}")
+                next_hop = routing_table[destino][1]
+
+            sock.sendto(msg.encode(), (next_hop, PORT))
+            safe_print(f"[FORWARD] Encaminhando msg para {destino} via {next_hop}")
             continue
 
-        safe_print(f"\n[RECV] Mensagem desconhecida de {sender}: {msg}")
 
 
 def build_message_for_neighbor(neighbor: str) -> bytes:
@@ -337,7 +339,7 @@ def main():
     threading.Thread(target=user_input_loop, daemon=True).start()
 
     safe_print("\n[ENTER] para encerrar.\n")
-    input("")
+    threading.Event().wait()
 
 
 if __name__ == "__main__":
