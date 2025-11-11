@@ -149,8 +149,8 @@ def build_message_for_neighbor(neighbor: str) -> bytes:
         for dest, (metric, next_hop) in routing_table.items():
             if dest == local_ip:
                 continue
-            if next_hop == neighbor:
-                continue
+        #   if next_hop == neighbor:
+        #      continue
             parts.append(f"*{dest};{metric}")
 
     return "".join(parts).encode()
